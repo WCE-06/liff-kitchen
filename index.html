@@ -69,6 +69,7 @@
   const ADMIN_KEY = 'aozora-kitchen-2026';
   const AUDIO_BASE_URL = './';
   const POLL_INTERVAL_MS = 2000;
+  const OVERLAP_SEC = 0.4;
 
   let audioEnabled = false;
   let polling = false;
@@ -187,14 +188,63 @@
     });
   }
 
-  function playOne(fileName){
-    return new Promise(function(resolve,reject){
+  function waitForMetadata(audio){
+    return new Promise(function(resolve, reject){
+      if(isFinite(audio.duration) && audio.duration > 0){
+        resolve();
+        return;
+      }
+
+      audio.onloadedmetadata = function(){ resolve(); };
+      audio.onerror = function(){ reject(new Error('音声ファイル読込失敗')); };
+      audio.load();
+    });
+  }
+
+  function playAudio(fileName){
+    return new Promise(async function(resolve, reject){
       const audio = new Audio(audioUrl(fileName));
       currentAudio = audio;
 
       audio.preload = 'auto';
       audio.volume = 1.0;
 
+      audio.onended = function(){
+        if(currentAudio === audio) currentAudio = null;
+        resolve({ended:true});
+      };
+
+      audio.onerror = function(){
+        if(currentAudio === audio) currentAudio = null;
+        reject(new Error('音声ファイル再生失敗: ' + fileName));
+      };
+
+      try{
+        await waitForMetadata(audio);
+      }catch(err){
+        reject(new Error('音声ファイル読込失敗: ' + fileName));
+        return;
+      }
+
+      const p = audio.play();
+
+      if(p && typeof p.then === 'function'){
+        p.catch(function(err){
+          if(currentAudio === audio) currentAudio = null;
+          reject(err);
+        });
+      }
+    });
+  }
+
+  function startAudio(fileName){
+    const audio = new Audio(audioUrl(fileName));
+    currentAudio = audio;
+
+    audio.preload = 'auto';
+    audio.volume = 1.0;
+
+    const playPromise = new Promise(function(resolve, reject){
       audio.onended = function(){
         if(currentAudio === audio) currentAudio = null;
         resolve();
@@ -206,6 +256,7 @@
       };
 
       const p = audio.play();
+
       if(p && typeof p.then === 'function'){
         p.catch(function(err){
           if(currentAudio === audio) currentAudio = null;
@@ -213,6 +264,62 @@
         });
       }
     });
+
+    return { audio, playPromise };
+  }
+
+  async function playWithOverlap(files, overlapSec){
+    let current = null;
+
+    for(let i = 0; i < files.length; i++){
+      const file = files[i];
+
+      const audio = new Audio(audioUrl(file));
+      audio.preload = 'auto';
+      audio.volume = 1.0;
+      currentAudio = audio;
+
+      await waitForMetadata(audio);
+
+      let ended = false;
+
+      const endedPromise = new Promise(function(resolve, reject){
+        audio.onended = function(){
+          ended = true;
+          if(currentAudio === audio) currentAudio = null;
+          resolve();
+        };
+
+        audio.onerror = function(){
+          ended = true;
+          if(currentAudio === audio) currentAudio = null;
+          reject(new Error('音声ファイル再生失敗: ' + file));
+        };
+      });
+
+      const p = audio.play();
+      if(p && typeof p.then === 'function'){
+        await p.catch(function(err){
+          if(currentAudio === audio) currentAudio = null;
+          throw err;
+        });
+      }
+
+      const isLast = i === files.length - 1;
+
+      if(isLast){
+        await endedPromise;
+        continue;
+      }
+
+      const duration = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+      const waitMs = Math.max((duration - overlapSec) * 1000, 0);
+
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+
+      // 次の音を開始するため、現在音は止めずに次ループへ進む
+      // 現在音の終了待ちはしないことで0.4秒重ねる
+    }
   }
 
   async function playSequenceNow(item){
@@ -223,9 +330,7 @@
     document.body.classList.add('flash');
 
     try{
-      for(const file of item.files){
-        await playOne(file);
-      }
+      await playWithOverlap(item.files, OVERLAP_SEC);
     }catch(err){
       setStatus('音声エラー: ' + (err && err.message ? err.message : err));
     }finally{
