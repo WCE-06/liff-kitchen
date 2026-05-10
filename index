@@ -144,7 +144,7 @@
   </div>
 
   <script>
-    const GAS_API_URL = 'https://script.google.com/macros/s/ここにGASデプロイID/exec';
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwv1ZxaNCiNuMzRyjaKoiallOW_KdVXZyqGQT1AygIrBkc0YhXDUDWEbTkCdiBCrZkN/exec';
     const ADMIN_KEY = 'aozora-kitchen-2026';
 
     const AUDIO_BASE_URL = './audio/';
