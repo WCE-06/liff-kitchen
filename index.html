@@ -1,1 +1,375 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aozora Kitchen 呼び出しシステム</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: #f7f2e8;
+      color: #2d2926;
+    }
 
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fffaf0;
+      border: 1px solid #d8c9aa;
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 18px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.3;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .small {
+      font-size: 13px;
+      opacity: .8;
+      line-height: 1.7;
+    }
+
+    .status {
+      font-size: 16px;
+      padding: 12px;
+      background: #efe5cf;
+      border-radius: 12px;
+      margin-top: 12px;
+      white-space: pre-wrap;
+    }
+
+    .menuBox {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.7;
+      padding: 18px;
+      background: #fff;
+      border-radius: 16px;
+      border: 2px solid #d8c9aa;
+      margin: 14px 0;
+      white-space: pre-wrap;
+      min-height: 72px;
+    }
+
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 36px;
+      padding: 16px;
+      text-align: center;
+      border-radius: 14px;
+      border: 2px solid #b9a784;
+      background: #fff;
+      letter-spacing: .15em;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 18px;
+      font-size: 22px;
+      font-weight: 700;
+      margin-top: 12px;
+      cursor: pointer;
+      background: #2f5f7f;
+      color: white;
+    }
+
+    button.secondary {
+      background: #8a5a3c;
+    }
+
+    button.danger {
+      background: #9d3328;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .flash {
+      animation: flash 1s ease-in-out 3;
+    }
+
+    @keyframes flash {
+      0% { background: #f7f2e8; }
+      50% { background: #ffe08a; }
+      100% { background: #f7f2e8; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Aozora Kitchen 呼び出しシステム</h1>
+      <div class="small">
+        この画面を厨房端末で常時表示してください。初回のみ「音声を有効化」を押します。
+      </div>
+
+      <button id="enableBtn" onclick="enableAudio()">音声を有効化</button>
+      <button class="secondary" onclick="testAudio()">テスト再生</button>
+
+      <div id="status" class="status">待機中</div>
+      <div id="menuBox" class="menuBox">注文待機中</div>
+    </div>
+
+    <div class="card">
+      <h2>料理完成 呼び出し</h2>
+      <input id="completeNo" inputmode="numeric" maxlength="3" placeholder="000">
+      <button onclick="manualCall('complete')">料理完成ボタン</button>
+    </div>
+
+    <div class="card">
+      <h2>トラブル時 呼び出し</h2>
+      <input id="troubleNo" inputmode="numeric" maxlength="3" placeholder="000">
+      <button class="danger" onclick="manualCall('trouble')">お客さま呼び出しボタン</button>
+    </div>
+  </div>
+
+  <script>
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwv1ZxaNCiNuMzRyjaKoiallOW_KdVXZyqGQT1AygIrBkc0YhXDUDWEbTkCdiBCrZkN/exec';
+    const ADMIN_KEY = 'aozora-kitchen-2026';
+
+    const AUDIO_BASE_URL = './audio/';
+    const POLL_INTERVAL_MS = 2000;
+
+    let audioEnabled = false;
+    let polling = false;
+    let playing = false;
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function setMenu(text) {
+      document.getElementById('menuBox').textContent = text || '注文待機中';
+    }
+
+    function normalizeNo(value) {
+      return String(value || '').replace(/\D/g, '').slice(-3).padStart(3, '0');
+    }
+
+    function audioUrl(fileName) {
+      return AUDIO_BASE_URL.replace(/\/$/, '') + '/' + fileName;
+    }
+
+    function gasJsonp(params) {
+      return new Promise(function(resolve, reject) {
+        const callbackName = 'gas_cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+
+        window[callbackName] = function(data) {
+          delete window[callbackName];
+          script.remove();
+          resolve(data);
+        };
+
+        const query = new URLSearchParams(Object.assign({}, params, {
+          callback: callbackName
+        }));
+
+        const script = document.createElement('script');
+        script.src = GAS_API_URL + '?' + query.toString();
+
+        script.onerror = function() {
+          delete window[callbackName];
+          script.remove();
+          reject(new Error('GAS通信に失敗しました'));
+        };
+
+        document.body.appendChild(script);
+      });
+    }
+
+    function playOne(fileName) {
+      return new Promise(function(resolve, reject) {
+        const audio = new Audio(audioUrl(fileName));
+        audio.preload = 'auto';
+        audio.volume = 1.0;
+
+        audio.onended = function() {
+          resolve();
+        };
+
+        audio.onerror = function() {
+          reject(new Error('音声ファイルを再生できません: ' + fileName));
+        };
+
+        const p = audio.play();
+
+        if (p && typeof p.then === 'function') {
+          p.catch(function(err) {
+            reject(err);
+          });
+        }
+      });
+    }
+
+    async function playSequence(files) {
+      if (!audioEnabled) {
+        setStatus('音声が有効化されていません。先に「音声を有効化」を押してください。');
+        return;
+      }
+
+      if (playing) {
+        setStatus('音声再生中です。少し待ってから再度お試しください。');
+        return;
+      }
+
+      playing = true;
+      document.body.classList.add('flash');
+
+      try {
+        for (const file of files) {
+          await playOne(file);
+        }
+      } catch (err) {
+        setStatus('音声再生エラー: ' + (err && err.message ? err.message : err));
+      } finally {
+        playing = false;
+        document.body.classList.remove('flash');
+      }
+    }
+
+    function numberFiles(orderNo) {
+      const no = normalizeNo(orderNo);
+      const n = Number(no);
+      const files = [];
+
+      if (!/^\d{3}$/.test(no) || n <= 0) {
+        return files;
+      }
+
+      const hundreds = Math.floor(n / 100) * 100;
+      const rest = n % 100;
+
+      if (hundreds > 0) {
+        files.push(String(hundreds) + '.mp3');
+      }
+
+      if (rest > 0) {
+        files.push(String(rest) + '.mp3');
+      }
+
+      return files;
+    }
+
+    function callNumberFiles(orderNo) {
+      return [
+        ...numberFiles(orderNo),
+        'number_customer.mp3'
+      ];
+    }
+
+    function completeFiles(orderNo) {
+      return [
+        'complete_intro.mp3',
+        ...callNumberFiles(orderNo),
+        ...callNumberFiles(orderNo),
+        'complete_outro.mp3'
+      ];
+    }
+
+    function troubleFiles(orderNo) {
+      return [
+        'complete_intro.mp3',
+        ...callNumberFiles(orderNo),
+        ...callNumberFiles(orderNo),
+        'trouble_outro.mp3'
+      ];
+    }
+
+    function enableAudio() {
+      audioEnabled = true;
+      document.getElementById('enableBtn').disabled = true;
+      setStatus('音声有効。注文待機中です。');
+      startPolling();
+    }
+
+    function testAudio() {
+      audioEnabled = true;
+      playSequence(['order_received.mp3']);
+      startPolling();
+    }
+
+    function startPolling() {
+      if (polling) return;
+      polling = true;
+
+      setInterval(async function () {
+        if (!audioEnabled) return;
+
+        try {
+          const res = await gasJsonp({
+            action: 'next_order',
+            adminKey: ADMIN_KEY
+          });
+
+          if (!res || !res.ok) {
+            setStatus('確認エラー: ' + (res && res.error ? res.error : 'unknown'));
+            return;
+          }
+
+          if (res.hasOrder) {
+            setStatus('新規注文を検知しました。');
+            setMenu(res.itemsText || '注文内容を取得できませんでした。');
+            playSequence(['order_received.mp3']);
+          }
+        } catch (err) {
+          setStatus('通信エラー: ' + (err && err.message ? err.message : err));
+        }
+      }, POLL_INTERVAL_MS);
+    }
+
+    async function manualCall(type) {
+      const inputId = type === 'trouble' ? 'troubleNo' : 'completeNo';
+      const orderNo = normalizeNo(document.getElementById(inputId).value);
+
+      if (!/^\d{3}$/.test(orderNo) || orderNo === '000') {
+        setStatus('001〜999の3桁注文番号を入力してください。');
+        return;
+      }
+
+      try {
+        const res = await gasJsonp({
+          action: 'manual_call',
+          adminKey: ADMIN_KEY,
+          type: type,
+          orderNo: orderNo
+        });
+
+        if (!res || !res.ok) {
+          setStatus('呼び出しエラー: ' + (res && res.error ? res.error : 'unknown'));
+          return;
+        }
+
+        if (type === 'trouble') {
+          setStatus('トラブル呼び出し中: ' + orderNo);
+          playSequence(troubleFiles(orderNo));
+        } else {
+          setStatus('料理完成呼び出し中: ' + orderNo);
+          playSequence(completeFiles(orderNo));
+        }
+      } catch (err) {
+        setStatus('通信エラー: ' + (err && err.message ? err.message : err));
+      }
+    }
+  </script>
+</body>
+</html>
