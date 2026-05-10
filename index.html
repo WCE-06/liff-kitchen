@@ -119,6 +119,8 @@
   let polling = false;
   let playing = false;
 
+  const audioCache = {};
+
   function setStatus(text){
     document.getElementById('status').textContent = text;
   }
@@ -164,13 +166,50 @@
     });
   }
 
-  function playOne(fileName){
-    return new Promise(function(resolve,reject){
+  function getAudio(fileName){
+    if(!audioCache[fileName]){
       const audio = new Audio(audioUrl(fileName));
       audio.preload = 'auto';
       audio.volume = 1.0;
+      audioCache[fileName] = audio;
+    }
 
-      audio.onended = function(){ resolve(); };
+    return audioCache[fileName];
+  }
+
+  function preloadFiles(files){
+    files.forEach(function(file){
+      const audio = getAudio(file);
+      try{
+        audio.load();
+      }catch(e){}
+    });
+  }
+
+  function warmUpAudio(){
+    const files = [
+      '注文受領.mp3',
+      'complete_intro.mp3',
+      'complete_outro.mp3',
+      'trouble_outro.mp3',
+      'number_customer.mp3'
+    ];
+
+    preloadFiles(files);
+  }
+
+  function playOne(fileName){
+    return new Promise(function(resolve,reject){
+      const audio = getAudio(fileName);
+
+      try{
+        audio.pause();
+        audio.currentTime = 0;
+      }catch(e){}
+
+      audio.onended = function(){
+        resolve();
+      };
 
       audio.onerror = function(){
         reject(new Error('音声ファイル再生失敗: ' + fileName));
@@ -179,7 +218,9 @@
       const p = audio.play();
 
       if(p && typeof p.then === 'function'){
-        p.catch(function(err){ reject(err); });
+        p.catch(function(err){
+          reject(err);
+        });
       }
     });
   }
@@ -199,6 +240,8 @@
     document.body.classList.add('flash');
 
     try{
+      preloadFiles(files);
+
       for(const file of files){
         await playOne(file);
       }
@@ -258,15 +301,26 @@
     ];
   }
 
+  function preloadNumberSet(orderNo){
+    const files = [
+      ...completeFiles(orderNo),
+      ...troubleFiles(orderNo)
+    ];
+
+    preloadFiles(files);
+  }
+
   function enableAudio(){
     audioEnabled = true;
     document.getElementById('enableBtn').disabled = true;
     setStatus('音声有効。注文待機中');
+    warmUpAudio();
     startPolling();
   }
 
   function testAudio(){
     audioEnabled = true;
+    warmUpAudio();
     playSequence(['注文受領.mp3']);
     startPolling();
   }
@@ -310,6 +364,8 @@
       setStatus('001〜999を入力してください');
       return;
     }
+
+    preloadNumberSet(orderNo);
 
     try{
       const res = await gasJsonp({
