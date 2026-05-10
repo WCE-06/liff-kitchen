@@ -5,76 +5,20 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aozora Kitchen 呼び出しシステム</title>
   <style>
-    body{
-      margin:0;
-      background:#f7f2e8;
-      color:#2d2926;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
-    }
+    body{margin:0;background:#f7f2e8;color:#2d2926;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
     .wrap{max-width:900px;margin:0 auto;padding:24px;}
-    .card{
-      background:#fffaf0;
-      border:1px solid #d8c9aa;
-      border-radius:18px;
-      padding:20px;
-      margin-bottom:18px;
-      box-shadow:0 8px 24px rgba(0,0,0,.08);
-    }
+    .card{background:#fffaf0;border:1px solid #d8c9aa;border-radius:18px;padding:20px;margin-bottom:18px;box-shadow:0 8px 24px rgba(0,0,0,.08);}
     h1{margin:0 0 8px;font-size:28px;line-height:1.3;}
     h2{margin:0 0 12px;font-size:20px;}
     .small{font-size:13px;opacity:.8;line-height:1.7;}
-    .status{
-      font-size:16px;
-      padding:12px;
-      background:#efe5cf;
-      border-radius:12px;
-      margin-top:12px;
-      white-space:pre-wrap;
-    }
-    .menuBox{
-      font-size:20px;
-      font-weight:700;
-      line-height:1.7;
-      padding:18px;
-      background:#fff;
-      border-radius:16px;
-      border:2px solid #d8c9aa;
-      margin:14px 0;
-      white-space:pre-wrap;
-      min-height:72px;
-    }
-    input{
-      width:100%;
-      box-sizing:border-box;
-      font-size:36px;
-      padding:16px;
-      text-align:center;
-      border-radius:14px;
-      border:2px solid #b9a784;
-      background:#fff;
-      letter-spacing:.15em;
-    }
-    button{
-      width:100%;
-      border:0;
-      border-radius:14px;
-      padding:18px;
-      font-size:22px;
-      font-weight:700;
-      margin-top:12px;
-      cursor:pointer;
-      background:#2f5f7f;
-      color:white;
-    }
-    button.secondary{background:#8a5a3c;}
+    .status{font-size:16px;padding:12px;background:#efe5cf;border-radius:12px;margin-top:12px;white-space:pre-wrap;}
+    .menuBox{font-size:20px;font-weight:700;line-height:1.7;padding:18px;background:#fff;border-radius:16px;border:2px solid #d8c9aa;margin:14px 0;white-space:pre-wrap;min-height:72px;}
+    input{width:100%;box-sizing:border-box;font-size:36px;padding:16px;text-align:center;border-radius:14px;border:2px solid #b9a784;background:#fff;letter-spacing:.15em;}
+    button{width:100%;border:0;border-radius:14px;padding:18px;font-size:22px;font-weight:700;margin-top:12px;cursor:pointer;background:#2f5f7f;color:white;}
     button.danger{background:#9d3328;}
-    button:disabled{opacity:.5;cursor:not-allowed;}
+    button:disabled{opacity:1;cursor:not-allowed;background:#3f7f4f;color:white;}
     .flash{animation:flash 1s ease-in-out 3;}
-    @keyframes flash{
-      0%{background:#f7f2e8;}
-      50%{background:#ffe08a;}
-      100%{background:#f7f2e8;}
-    }
+    @keyframes flash{0%{background:#f7f2e8;}50%{background:#ffe08a;}100%{background:#f7f2e8;}}
   </style>
 </head>
 <body>
@@ -88,7 +32,6 @@
     </div>
 
     <button id="enableBtn" onclick="enableAudio()">音声を有効化</button>
-    <button class="secondary" onclick="testAudio()">テスト再生</button>
 
     <div id="status" class="status">待機中</div>
     <div id="menuBox" class="menuBox">注文待機中</div>
@@ -120,6 +63,7 @@
   let playing = false;
 
   const audioCache = {};
+  const audioQueue = [];
 
   function setStatus(text){
     document.getElementById('status').textContent = text;
@@ -139,9 +83,7 @@
 
   function gasJsonp(params){
     return new Promise(function(resolve,reject){
-      const callbackName =
-        'gas_cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
-
+      const callbackName = 'gas_cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
       const script = document.createElement('script');
 
       window[callbackName] = function(data){
@@ -150,10 +92,7 @@
         resolve(data);
       };
 
-      const query = new URLSearchParams(Object.assign({}, params, {
-        callback: callbackName
-      }));
-
+      const query = new URLSearchParams(Object.assign({}, params, { callback: callbackName }));
       script.src = GAS_API_URL + '?' + query.toString();
 
       script.onerror = function(){
@@ -173,29 +112,26 @@
       audio.volume = 1.0;
       audioCache[fileName] = audio;
     }
-
     return audioCache[fileName];
   }
 
   function preloadFiles(files){
     files.forEach(function(file){
       const audio = getAudio(file);
-      try{
-        audio.load();
-      }catch(e){}
+      try{ audio.load(); }catch(e){}
     });
   }
 
   function warmUpAudio(){
-    const files = [
+    preloadFiles([
+      'chime_start.mp3',
+      'chime_end.mp3',
       '注文受領.mp3',
       'complete_intro.mp3',
       'complete_outro.mp3',
       'trouble_outro.mp3',
       'number_customer.mp3'
-    ];
-
-    preloadFiles(files);
+    ]);
   }
 
   function playOne(fileName){
@@ -207,41 +143,22 @@
         audio.currentTime = 0;
       }catch(e){}
 
-      audio.onended = function(){
-        resolve();
-      };
-
-      audio.onerror = function(){
-        reject(new Error('音声ファイル再生失敗: ' + fileName));
-      };
+      audio.onended = function(){ resolve(); };
+      audio.onerror = function(){ reject(new Error('音声ファイル再生失敗: ' + fileName)); };
 
       const p = audio.play();
-
       if(p && typeof p.then === 'function'){
-        p.catch(function(err){
-          reject(err);
-        });
+        p.catch(function(err){ reject(err); });
       }
     });
   }
 
-  async function playSequence(files){
-    if(!audioEnabled){
-      setStatus('先に「音声を有効化」を押してください');
-      return;
-    }
-
-    if(playing){
-      setStatus('現在音声再生中です');
-      return;
-    }
-
+  async function playSequenceNow(files){
     playing = true;
     document.body.classList.add('flash');
 
     try{
       preloadFiles(files);
-
       for(const file of files){
         await playOne(file);
       }
@@ -250,7 +167,47 @@
     }finally{
       playing = false;
       document.body.classList.remove('flash');
+      processAudioQueue();
     }
+  }
+
+  function enqueueAudio(files, label){
+    if(!audioEnabled){
+      setStatus('先に「音声を有効化」を押してください');
+      return;
+    }
+
+    audioQueue.push({
+      files: files,
+      label: label || '館内放送'
+    });
+
+    setStatus(
+      (playing ? '放送中。次の放送を予約しました。' : '放送を開始します。') +
+      '\n待機中の放送: ' + audioQueue.length + '件'
+    );
+
+    processAudioQueue();
+  }
+
+  function processAudioQueue(){
+    if(playing) return;
+    if(audioQueue.length === 0){
+      setStatus('音声有効。注文待機中');
+      return;
+    }
+
+    const next = audioQueue.shift();
+    setStatus(
+      '放送中: ' + next.label +
+      '\n待機中の放送: ' + audioQueue.length + '件'
+    );
+
+    playSequenceNow(next.files);
+  }
+
+  function withChime(files){
+    return ['chime_start.mp3', ...files, 'chime_end.mp3'];
   }
 
   function numberFiles(orderNo){
@@ -284,50 +241,48 @@
   }
 
   function completeFiles(orderNo){
-    return [
+    return withChime([
       'complete_intro.mp3',
       ...callNumberFiles(orderNo),
       ...callNumberFiles(orderNo),
       'complete_outro.mp3'
-    ];
+    ]);
   }
 
   function troubleFiles(orderNo){
-    return [
+    return withChime([
       'complete_intro.mp3',
       ...callNumberFiles(orderNo),
       ...callNumberFiles(orderNo),
       'trouble_outro.mp3'
-    ];
+    ]);
+  }
+
+  function orderReceivedFiles(){
+    return withChime(['注文受領.mp3']);
   }
 
   function preloadNumberSet(orderNo){
-    const files = [
+    preloadFiles([
       ...completeFiles(orderNo),
       ...troubleFiles(orderNo)
-    ];
-
-    preloadFiles(files);
+    ]);
   }
 
   function enableAudio(){
     audioEnabled = true;
-    document.getElementById('enableBtn').disabled = true;
+
+    const btn = document.getElementById('enableBtn');
+    btn.disabled = true;
+    btn.textContent = '音声有効化済み ✓';
+
     setStatus('音声有効。注文待機中');
     warmUpAudio();
     startPolling();
   }
 
-  function testAudio(){
-    audioEnabled = true;
-    warmUpAudio();
-    playSequence(['注文受領.mp3']);
-    startPolling();
-  }
-
   function startPolling(){
     if(polling) return;
-
     polling = true;
 
     setInterval(async function(){
@@ -345,9 +300,8 @@
         }
 
         if(res.hasOrder){
-          setStatus('新規注文を検知しました');
           setMenu(res.itemsText || '注文内容取得失敗');
-          playSequence(['注文受領.mp3']);
+          enqueueAudio(orderReceivedFiles(), '新規注文');
         }
 
       }catch(err){
@@ -381,11 +335,9 @@
       }
 
       if(type === 'trouble'){
-        setStatus('トラブル呼び出し: ' + orderNo);
-        playSequence(troubleFiles(orderNo));
+        enqueueAudio(troubleFiles(orderNo), 'トラブル呼び出し ' + orderNo);
       }else{
-        setStatus('料理完成呼び出し: ' + orderNo);
-        playSequence(completeFiles(orderNo));
+        enqueueAudio(completeFiles(orderNo), '料理完成呼び出し ' + orderNo);
       }
 
     }catch(err){
