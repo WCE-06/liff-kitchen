@@ -74,7 +74,8 @@
   let polling = false;
   let playing = false;
   let currentLabel = '';
-  const audioCache = {};
+  let currentAudio = null;
+
   const audioQueue = [];
 
   function setStatus(text){ document.getElementById('status').textContent = text; }
@@ -89,6 +90,12 @@
     setTimeout(() => btn.classList.remove('pressed'), 350);
   }
 
+  function escapeHtml(str){
+    return String(str || '').replace(/[&<>"']/g, s => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[s]));
+  }
+
   function renderQueue(){
     const box = document.getElementById('queueBox');
     const pending = audioQueue.filter(q => !q.started);
@@ -100,7 +107,6 @@
     }
 
     box.className = '';
-
     let html = '';
 
     if(currentLabel){
@@ -129,12 +135,6 @@
     box.innerHTML = html;
   }
 
-  function escapeHtml(str){
-    return String(str || '').replace(/[&<>"']/g, s => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[s]));
-  }
-
   function cancelQueued(id){
     const idx = audioQueue.findIndex(q => q.id === id && !q.started);
     if(idx >= 0){
@@ -149,40 +149,69 @@
     return new Promise(function(resolve,reject){
       const callbackName = 'gas_cb_' + Date.now() + '_' + Math.floor(Math.random()*100000);
       const script = document.createElement('script');
-      window[callbackName] = function(data){ delete window[callbackName]; script.remove(); resolve(data); };
+
+      window[callbackName] = function(data){
+        delete window[callbackName];
+        script.remove();
+        resolve(data);
+      };
+
       const query = new URLSearchParams(Object.assign({}, params, {callback:callbackName}));
       script.src = GAS_API_URL + '?' + query.toString();
-      script.onerror = function(){ delete window[callbackName]; script.remove(); reject(new Error('GAS通信に失敗しました')); };
+
+      script.onerror = function(){
+        delete window[callbackName];
+        script.remove();
+        reject(new Error('GAS通信に失敗しました'));
+      };
+
       document.body.appendChild(script);
     });
   }
 
-  function getAudio(fileName){
-    if(!audioCache[fileName]){
-      const audio = new Audio(audioUrl(fileName));
-      audio.preload = 'auto';
-      audio.volume = 1.0;
-      audioCache[fileName] = audio;
-    }
-    return audioCache[fileName];
-  }
-
-  function preloadFiles(files){
-    files.forEach(file => { try{ getAudio(file).load(); }catch(e){} });
-  }
-
   function warmUpAudio(){
-    preloadFiles(['chime_start.mp3','chime_end.mp3','注文受領.mp3','complete_intro.mp3','complete_outro.mp3','trouble_outro.mp3','number_customer.mp3']);
+    const warmFiles = [
+      'chime_start.mp3',
+      'chime_end.mp3',
+      '注文受領.mp3',
+      'complete_intro.mp3',
+      'complete_outro.mp3',
+      'trouble_outro.mp3',
+      'number_customer.mp3'
+    ];
+
+    warmFiles.forEach(file => {
+      const audio = new Audio(audioUrl(file));
+      audio.preload = 'auto';
+      audio.load();
+    });
   }
 
   function playOne(fileName){
     return new Promise(function(resolve,reject){
-      const audio = getAudio(fileName);
-      try{ audio.pause(); audio.currentTime = 0; }catch(e){}
-      audio.onended = function(){ resolve(); };
-      audio.onerror = function(){ reject(new Error('音声ファイル再生失敗: ' + fileName)); };
+      const audio = new Audio(audioUrl(fileName));
+      currentAudio = audio;
+
+      audio.preload = 'auto';
+      audio.volume = 1.0;
+
+      audio.onended = function(){
+        if(currentAudio === audio) currentAudio = null;
+        resolve();
+      };
+
+      audio.onerror = function(){
+        if(currentAudio === audio) currentAudio = null;
+        reject(new Error('音声ファイル再生失敗: ' + fileName));
+      };
+
       const p = audio.play();
-      if(p && typeof p.then === 'function') p.catch(err => reject(err));
+      if(p && typeof p.then === 'function'){
+        p.catch(function(err){
+          if(currentAudio === audio) currentAudio = null;
+          reject(err);
+        });
+      }
     });
   }
 
@@ -194,11 +223,13 @@
     document.body.classList.add('flash');
 
     try{
-      preloadFiles(item.files);
-      for(const file of item.files) await playOne(file);
+      for(const file of item.files){
+        await playOne(file);
+      }
     }catch(err){
       setStatus('音声エラー: ' + (err && err.message ? err.message : err));
     }finally{
+      currentAudio = null;
       playing = false;
       currentLabel = '';
       document.body.classList.remove('flash');
@@ -220,55 +251,81 @@
       started:false
     });
 
-    setStatus((playing ? '放送中。次の放送を予約しました。' : '放送を開始します。') + '\n待機中の放送: ' + audioQueue.filter(q => !q.started).length + '件');
+    setStatus(
+      (playing ? '放送中。次の放送を予約しました。' : '放送を開始します。') +
+      '\n待機中の放送: ' + audioQueue.filter(q => !q.started).length + '件'
+    );
+
     renderQueue();
     processAudioQueue();
   }
 
   function processAudioQueue(){
     if(playing) return;
+
     if(audioQueue.length === 0){
       setStatus('音声有効。注文待機中');
       renderQueue();
       return;
     }
+
     const next = audioQueue.shift();
     playSequenceNow(next);
   }
 
-  function withChime(files){ return ['chime_start.mp3', ...files, 'chime_end.mp3']; }
+  function withChime(files){
+    return ['chime_start.mp3', ...files, 'chime_end.mp3'];
+  }
 
   function numberFiles(orderNo){
     const no = normalizeNo(orderNo);
     const n = Number(no);
     const files = [];
+
     if(!/^\d{3}$/.test(no) || n <= 0) return files;
+
     const hundreds = Math.floor(n / 100) * 100;
     const rest = n % 100;
+
     if(hundreds > 0) files.push(String(hundreds) + '.mp3');
     if(rest > 0) files.push(String(rest) + '.mp3');
+
     return files;
   }
 
-  function callNumberFiles(orderNo){ return [...numberFiles(orderNo), 'number_customer.mp3']; }
+  function callNumberFiles(orderNo){
+    return [...numberFiles(orderNo), 'number_customer.mp3'];
+  }
 
   function completeFiles(orderNo){
-    return withChime(['complete_intro.mp3', ...callNumberFiles(orderNo), ...callNumberFiles(orderNo), 'complete_outro.mp3']);
+    return withChime([
+      'complete_intro.mp3',
+      ...callNumberFiles(orderNo),
+      ...callNumberFiles(orderNo),
+      'complete_outro.mp3'
+    ]);
   }
 
   function troubleFiles(orderNo){
-    return withChime(['complete_intro.mp3', ...callNumberFiles(orderNo), ...callNumberFiles(orderNo), 'trouble_outro.mp3']);
+    return withChime([
+      'complete_intro.mp3',
+      ...callNumberFiles(orderNo),
+      ...callNumberFiles(orderNo),
+      'trouble_outro.mp3'
+    ]);
   }
 
-  function orderReceivedFiles(){ return withChime(['注文受領.mp3']); }
-
-  function preloadNumberSet(orderNo){ preloadFiles([...completeFiles(orderNo), ...troubleFiles(orderNo)]); }
+  function orderReceivedFiles(){
+    return withChime(['注文受領.mp3']);
+  }
 
   function enableAudio(){
     audioEnabled = true;
+
     const btn = document.getElementById('enableBtn');
     btn.disabled = true;
     btn.textContent = '音声有効化済み ✓';
+
     setStatus('音声有効。注文待機中');
     warmUpAudio();
     renderQueue();
@@ -281,12 +338,15 @@
 
     setInterval(async function(){
       if(!audioEnabled) return;
+
       try{
         const res = await gasJsonp({action:'next_order', adminKey:ADMIN_KEY});
+
         if(!res || !res.ok){
           setStatus('確認エラー: ' + (res && res.error ? res.error : 'unknown'));
           return;
         }
+
         if(res.hasOrder){
           setMenu(res.itemsText || '注文内容取得失敗');
           enqueueAudio(orderReceivedFiles(), '新規注文');
@@ -309,10 +369,9 @@
       return;
     }
 
-    preloadNumberSet(orderNo);
-
     try{
       const res = await gasJsonp({action:'manual_call', adminKey:ADMIN_KEY, type, orderNo});
+
       if(!res || !res.ok){
         setStatus('呼び出しエラー: ' + (res && res.error ? res.error : 'unknown'));
         return;
