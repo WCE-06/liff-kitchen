@@ -282,10 +282,20 @@ const AUDIO_BASE_URL = './';
 const POLL_INTERVAL_MS = 2000;
 const OVERLAP_SEC = 0.4;
 
+const BGM_URL =
+'https://raw.githubusercontent.com/WCE-06/liff-entry/fa5905f5c97a16441dabab90a9ac70d291ec6788/bgm.mp3';
+
+const BGM_BASE_VOLUME = 0.50;
+const BGM_NIGHT_2130_VOLUME = 0.35;
+const BGM_NIGHT_2230_VOLUME = 0.20;
+const BGM_DUCK_VOLUME = 0.08;
+const ANNOUNCE_VOLUME = 1.0;
+
 let audioEnabled = false;
 let polling = false;
 let playing = false;
 let currentLabel = '';
+let bgmAudio = null;
 
 const audioQueue = [];
 
@@ -331,6 +341,112 @@ function audioUrl(fileName){
   return AUDIO_BASE_URL.replace(/\/$/,'')
     + '/'
     + fileName;
+}
+
+function getBgmVolumeByTime(){
+
+  const now = new Date();
+
+  const minutes =
+    now.getHours() * 60
+    + now.getMinutes();
+
+  if(
+    minutes >= (22 * 60 + 30)
+    || minutes < (8 * 60)
+  ){
+    return BGM_NIGHT_2230_VOLUME;
+  }
+
+  if(
+    minutes >= (21 * 60 + 30)
+  ){
+    return BGM_NIGHT_2130_VOLUME;
+  }
+
+  return BGM_BASE_VOLUME;
+
+}
+
+function applyBgmVolume(){
+
+  if(!bgmAudio) return;
+
+  if(playing){
+
+    bgmAudio.volume =
+      BGM_DUCK_VOLUME;
+
+  }else{
+
+    bgmAudio.volume =
+      getBgmVolumeByTime();
+
+  }
+
+}
+
+function startBgm(){
+
+  if(bgmAudio) return;
+
+  bgmAudio =
+    new Audio(BGM_URL);
+
+  bgmAudio.loop = true;
+
+  bgmAudio.preload = 'auto';
+
+  bgmAudio.volume =
+    getBgmVolumeByTime();
+
+  const p =
+    bgmAudio.play();
+
+  if(
+    p
+    && typeof p.then === 'function'
+  ){
+
+    p.catch(err => {
+
+      setStatus(
+        'BGM再生エラー: '
+        + (
+          err && err.message
+            ? err.message
+            : err
+        )
+      );
+
+    });
+
+  }
+
+  setInterval(() => {
+
+    applyBgmVolume();
+
+  }, 60 * 1000);
+
+}
+
+function duckBgm(){
+
+  if(!bgmAudio) return;
+
+  bgmAudio.volume =
+    BGM_DUCK_VOLUME;
+
+}
+
+function restoreBgm(){
+
+  if(!bgmAudio) return;
+
+  bgmAudio.volume =
+    getBgmVolumeByTime();
+
 }
 
 function pressFeedback(id){
@@ -551,7 +667,7 @@ async function playWithOverlap(files){
 
     audio.preload = 'auto';
 
-    audio.volume = 1.0;
+    audio.volume = ANNOUNCE_VOLUME;
 
     audios.push(audio);
 
@@ -627,6 +743,8 @@ async function playSequenceNow(item){
 
   document.body.classList.add('flash');
 
+  duckBgm();
+
   try{
 
     await playWithOverlap(item.files);
@@ -649,6 +767,8 @@ async function playSequenceNow(item){
     currentLabel = '';
 
     document.body.classList.remove('flash');
+
+    restoreBgm();
 
     renderQueue();
 
@@ -716,6 +836,8 @@ function processAudioQueue(){
     setStatus(
       '音声有効。注文待機中'
     );
+
+    restoreBgm();
 
     renderQueue();
 
@@ -852,6 +974,8 @@ function enableAudio(){
   );
 
   warmUpAudio();
+
+  startBgm();
 
   renderQueue();
 
