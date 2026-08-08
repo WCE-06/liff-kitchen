@@ -585,7 +585,21 @@ function gasJsonp(params){
     const script =
       document.createElement('script');
 
+    const timeoutId = setTimeout(function(){
+
+      delete window[callbackName];
+
+      script.remove();
+
+      setStatus('注文サーバーとの通信を再確認しています');
+
+      reject(new Error('GAS応答タイムアウト'));
+
+    }, 10000);
+
     window[callbackName] = function(data){
+
+      clearTimeout(timeoutId);
 
       delete window[callbackName];
 
@@ -608,6 +622,8 @@ function gasJsonp(params){
       + query.toString();
 
     script.onerror = function(){
+
+      clearTimeout(timeoutId);
 
       delete window[callbackName];
 
